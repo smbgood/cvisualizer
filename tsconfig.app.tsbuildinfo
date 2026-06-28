@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/livedisplay.tsx","./src/components/seedcanvas.tsx","./src/components/snapshotgallery.tsx","./src/hooks/useinferencestream.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/livedisplay.tsx","./src/components/seedcanvas.tsx","./src/components/snapshotgallery.tsx","./src/components/timelinescrubber.tsx","./src/hooks/useinferencestream.ts"],"version":"5.9.3"}

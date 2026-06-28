@@ -4,7 +4,9 @@ Local Windows prototype for interactive AI image visualization:
 
 - Draw pixels or import a seed image.
 - Stream continuously transforming frames in the main display.
+- Scrub through generated frames on a timeline.
 - Capture snapshots and review them as thumbnails.
+- Re-open saved output sessions from separate local folders.
 
 ## Architecture
 
@@ -50,6 +52,16 @@ uvicorn backend.app:app --reload --port 8000
 
 Backend status endpoint: <http://127.0.0.1:8000/api/status>
 
+Generated frames are saved under `outputs/<session-id>/` by default. Each folder includes `manifest.json`,
+`seed.png`, and numbered frame PNGs so past sessions can be loaded later from the timeline panel.
+
+Optional output location:
+
+```powershell
+$env:CVIS_OUTPUT_DIR="D:\cvisualizer-runs"
+uvicorn backend.app:app --reload --port 8000
+```
+
 ## StreamDiffusion Setup
 
 The backend automatically tries to initialize StreamDiffusion. If initialization fails, it falls back to `mock-engine` so the UI still works.
@@ -81,6 +93,23 @@ Current conservative defaults for local streaming:
 - Inference steps: `0,16,32` by default for stronger image-to-image reinterpretation
 - Feedback: each generated frame becomes the next source image, weighted by the Strength control
 
+## Anti-Stagnation Controls
+
+The generation loop can naturally settle into a low-change "burn-in" state. The app now includes a bounded anti-stagnation pulse that activates when frame-to-frame change stays below a threshold for several frames.
+
+- **Enable anti-stagnation**: toggles automatic intervention
+- **Stagnation threshold**: lower values trigger less often, higher values trigger sooner
+- **Detection window**: number of consecutive low-delta frames before intervention
+- **Variation strength**: controls how strong each intervention pulse is
+
+When triggered, the backend briefly applies:
+
+- a temporary prompt variation suffix
+- reduced feedback strength (so new output is not overly anchored)
+- small deterministic noise on the feedback seed
+
+Per-frame diagnostics (`delta_from_previous`, `stagnant_frames`, `variation_applied`) are written to each session `manifest.json`.
+
 ## Troubleshooting
 
 - **`engine: mock-engine` in `/api/status`**
@@ -100,3 +129,4 @@ Current conservative defaults for local streaming:
 
 - Snapshot capture stores the current displayed frame, not the original seed.
 - Snapshot gallery is session-local (in-memory) in this MVP.
+- Timeline frames are persisted to local session folders and served by the backend.

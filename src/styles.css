@@ -96,17 +96,31 @@ input[type="text"],
 input:not([type]),
 input[type="range"],
 input[type="file"],
+input[type="checkbox"],
 button {
   font: inherit;
 }
 
-input {
+input[type="text"],
+input:not([type]),
+input[type="range"],
+input[type="file"] {
   width: 100%;
   border: 1px solid #3a4772;
   background: #111729;
   color: #e9edf5;
   border-radius: 8px;
   padding: 0.45rem 0.5rem;
+}
+
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: auto;
 }
 
 button,
@@ -159,6 +173,78 @@ button,
   right: 6px;
   font-size: 0.8rem;
   opacity: 0.85;
+}
+
+.timeline-controls {
+  align-items: end;
+}
+
+.timeline-controls button {
+  flex: 0 0 auto;
+}
+
+.filmstrip {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.3rem;
+}
+
+.filmstrip-frame {
+  min-width: 72px;
+  border: 1px solid #374673;
+  background: #0f162b;
+  color: #d7def5;
+  border-radius: 8px;
+  padding: 0.3rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.filmstrip-frame img {
+  width: 56px;
+  aspect-ratio: 1 / 1;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.filmstrip-frame.selected,
+.saved-session.selected {
+  outline: 2px solid #7da4ff;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.8rem;
+}
+
+.saved-session-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+}
+
+.saved-session {
+  border: 1px solid #374673;
+  background: #0f162b;
+  color: #d7def5;
+  border-radius: 8px;
+  padding: 0.45rem;
+  display: grid;
+  gap: 0.3rem;
+  text-align: left;
+}
+
+.saved-session img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 5px;
+  object-fit: cover;
 }
 
 .chip-row {

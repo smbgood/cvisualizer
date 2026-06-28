@@ -10,6 +10,7 @@ from PIL import Image
 from .base_engine import InferenceEngine, InferenceSettings
 
 logger = logging.getLogger("uvicorn.error")
+DEFAULT_PROMPT = "radical surreal neon transformation"
 
 
 @dataclass
@@ -142,7 +143,7 @@ class StreamDiffusionEngine(InferenceEngine):
         return source
 
     def _ensure_prompt(self, stream: object, prompt: str) -> None:
-        prompt = prompt.strip() or "radical surreal neon transformation"
+        prompt = prompt.strip() or DEFAULT_PROMPT
         if self._runtime.prepared_prompt is None:
             stream.prepare(prompt=prompt, guidance_scale=self._runtime.guidance_scale)
         elif prompt != self._runtime.prepared_prompt:

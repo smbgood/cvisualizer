@@ -9,6 +9,10 @@ class InferenceSettings:
   prompt: str
   strength: float
   running: bool
+  anti_stagnation_enabled: bool = True
+  stagnation_threshold: float = 0.012
+  stagnation_window: int = 6
+  variation_strength: float = 0.35
 
 
 class InferenceEngine:

@@ -3,13 +3,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import numpy as np
 from PIL import Image
 
 try:
@@ -41,17 +48,122 @@ def data_url_to_image(data_url: str) -> Image.Image:
 class SessionState:
     seed_image: Optional[Image.Image]
     settings: InferenceSettings
+    session_id: str
+    session_dir: Path
+    created_at: str
+    frames: list[dict[str, object]]
     frame_index: int = 0
+    saved_frame_index: int = 0
+    previous_frame_small: Optional[np.ndarray] = None
+    stagnant_frames: int = 0
+    variation_pulse_remaining: int = 0
+
+
+DEFAULT_PROMPT = "radical surreal neon transformation"
+VARIATION_SUFFIX = ", fresh composition, altered color palette, unexpected details"
 
 
 def clamp_strength(value: float) -> float:
     return min(max(value, 0.05), 1.0)
 
 
+def clamp_threshold(value: float) -> float:
+    return min(max(value, 0.001), 0.08)
+
+
+def clamp_window(value: int) -> int:
+    return min(max(value, 2), 30)
+
+
+def clamp_variation_strength(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
 def image_feedback_source(previous: Image.Image, generated: Image.Image, strength: float) -> Image.Image:
     base = previous.convert("RGB").resize(generated.size)
     feedback_weight = clamp_strength(strength)
     return Image.blend(base, generated.convert("RGB"), feedback_weight)
+
+
+def downsample_for_delta(image: Image.Image, size: int = 64) -> np.ndarray:
+    reduced = image.convert("RGB").resize((size, size), Image.Resampling.BILINEAR)
+    return np.asarray(reduced, dtype=np.float32) / 255.0
+
+
+def frame_delta_score(previous_small: np.ndarray, current_small: np.ndarray) -> float:
+    return float(np.mean(np.abs(current_small - previous_small)))
+
+
+def build_effective_prompt(prompt: str, variation_applied: bool) -> str:
+    base_prompt = prompt.strip() or DEFAULT_PROMPT
+    if not variation_applied:
+        return base_prompt
+    return f"{base_prompt}{VARIATION_SUFFIX}"
+
+
+def inject_feedback_noise(source: Image.Image, frame_index: int, variation_strength: float) -> Image.Image:
+    if variation_strength <= 0.0:
+        return source
+    sigma = 4.0 + (14.0 * clamp_variation_strength(variation_strength))
+    rng = np.random.default_rng(frame_index * 7919)
+    array = np.asarray(source.convert("RGB"), dtype=np.float32)
+    noisy = array + rng.normal(0.0, sigma, size=array.shape)
+    return Image.fromarray(np.clip(noisy, 0, 255).astype(np.uint8), mode="RGB")
+
+
+def variation_pulse_frames(variation_strength: float) -> int:
+    return 2 + int(round(clamp_variation_strength(variation_strength) * 3))
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def create_session_id() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{timestamp}-{uuid4().hex[:8]}"
+
+
+OUTPUT_ROOT = Path(os.environ.get("CVIS_OUTPUT_DIR", Path(__file__).resolve().parents[1] / "outputs")).resolve()
+OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def session_output_url(session_id: str, filename: str) -> str:
+    return f"/outputs/{session_id}/{filename}"
+
+
+def session_dir_for(session_id: str) -> Path:
+    session_dir = (OUTPUT_ROOT / session_id).resolve()
+    if OUTPUT_ROOT not in session_dir.parents:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return session_dir
+
+
+def write_manifest(state: SessionState, ended_at: str | None = None) -> None:
+    manifest = {
+        "id": state.session_id,
+        "created_at": state.created_at,
+        "ended_at": ended_at,
+        "engine": engine.name,
+        "detail": engine.detail,
+        "frames": state.frames,
+    }
+    (state.session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def read_manifest(session_id: str) -> dict[str, object]:
+    session_dir = session_dir_for(session_id)
+    manifest_path = session_dir / "manifest.json"
+    if not manifest_path.exists() or not session_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    frames = manifest.get("frames", [])
+    if isinstance(frames, list):
+        for frame in frames:
+            if isinstance(frame, dict) and isinstance(frame.get("filename"), str):
+                frame["url"] = session_output_url(session_id, frame["filename"])
+    return manifest
 
 
 app = FastAPI(title="cvisualizer-backend")
@@ -62,6 +174,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.mount("/outputs", StaticFiles(directory=str(OUTPUT_ROOT)), name="outputs")
 
 engine = StreamDiffusionEngine.try_create_from_env() or MockEngine()
 logger.info("Inference engine selected: %s (%s)", engine.name, engine.detail)
@@ -76,15 +189,60 @@ def get_status() -> dict[str, object]:
     }
 
 
+@app.get("/api/sessions")
+def list_sessions() -> dict[str, list[dict[str, object]]]:
+    sessions: list[dict[str, object]] = []
+    for session_dir in OUTPUT_ROOT.iterdir():
+        if not session_dir.is_dir():
+            continue
+        manifest_path = session_dir / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = read_manifest(session_dir.name)
+        except Exception:
+            logger.exception("Failed to read session manifest: %s", manifest_path)
+            continue
+
+        frames = manifest.get("frames", [])
+        latest_frame = frames[-1] if frames else None
+        sessions.append(
+            {
+                "id": manifest.get("id", session_dir.name),
+                "created_at": manifest.get("created_at"),
+                "ended_at": manifest.get("ended_at"),
+                "engine": manifest.get("engine", "unknown"),
+                "frame_count": len(frames) if isinstance(frames, list) else 0,
+                "thumbnail_url": latest_frame.get("url") if isinstance(latest_frame, dict) else None,
+            }
+        )
+
+    sessions.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return {"sessions": sessions}
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str) -> dict[str, object]:
+    return read_manifest(session_id)
+
+
 @app.websocket("/ws/stream")
 async def stream_socket(websocket: WebSocket) -> None:
     await websocket.accept()
     client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown-client"
     logger.info("Stream socket accepted from %s using %s", client, engine.name)
+    session_id = create_session_id()
+    session_dir = OUTPUT_ROOT / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
     state = SessionState(
         seed_image=None,
-        settings=InferenceSettings(prompt="radical surreal neon transformation", strength=0.85, running=True),
+        settings=InferenceSettings(prompt=DEFAULT_PROMPT, strength=0.85, running=True),
+        session_id=session_id,
+        session_dir=session_dir,
+        created_at=utc_now_iso(),
+        frames=[],
     )
+    write_manifest(state)
 
     async def produce_frames() -> None:
         while True:
@@ -100,8 +258,15 @@ async def stream_socket(websocket: WebSocket) -> None:
                 state.settings.prompt,
                 state.settings.strength,
             )
+            variation_applied = (
+                state.settings.anti_stagnation_enabled
+                and state.variation_pulse_remaining > 0
+                and state.settings.variation_strength > 0
+            )
+            effective_prompt = build_effective_prompt(state.settings.prompt, variation_applied)
+            transform_settings = replace(state.settings, prompt=effective_prompt)
             try:
-                frame = engine.transform(state.seed_image, state.settings, state.frame_index)
+                frame = engine.transform(state.seed_image, transform_settings, state.frame_index)
             except Exception as exc:
                 logger.exception("Frame generation %s failed for %s", state.frame_index, client)
                 state.settings.running = False
@@ -114,19 +279,93 @@ async def stream_socket(websocket: WebSocket) -> None:
                 )
                 continue
 
-            state.seed_image = image_feedback_source(state.seed_image, frame, state.settings.strength)
+            current_small = downsample_for_delta(frame)
+            delta_from_previous: float | None = None
+            variation_triggered = False
+            if state.previous_frame_small is not None:
+                delta_from_previous = frame_delta_score(state.previous_frame_small, current_small)
+                if (
+                    state.settings.anti_stagnation_enabled
+                    and delta_from_previous < clamp_threshold(state.settings.stagnation_threshold)
+                ):
+                    state.stagnant_frames += 1
+                else:
+                    state.stagnant_frames = 0
+            else:
+                state.stagnant_frames = 0
+            state.previous_frame_small = current_small
+
+            if (
+                state.settings.anti_stagnation_enabled
+                and state.stagnant_frames >= clamp_window(state.settings.stagnation_window)
+                and state.variation_pulse_remaining <= 0
+            ):
+                state.variation_pulse_remaining = variation_pulse_frames(state.settings.variation_strength)
+                variation_triggered = True
+
+            feedback_strength = state.settings.strength
+            if variation_applied:
+                modulation = 0.2 + (0.45 * clamp_variation_strength(state.settings.variation_strength))
+                feedback_strength = clamp_strength(state.settings.strength * (1.0 - modulation))
+
+            state.saved_frame_index += 1
+            filename = f"frame_{state.saved_frame_index:06d}.png"
+            frame_path = state.session_dir / filename
+            frame.save(frame_path, format="PNG")
+            frame_record = {
+                "index": state.saved_frame_index,
+                "generation_index": state.frame_index,
+                "filename": filename,
+                "url": session_output_url(state.session_id, filename),
+                "created_at": utc_now_iso(),
+                "prompt": state.settings.prompt,
+                "effective_prompt": effective_prompt,
+                "strength": state.settings.strength,
+                "feedback_strength": feedback_strength,
+                "delta_from_previous": delta_from_previous,
+                "stagnant_frames": state.stagnant_frames,
+                "variation_applied": variation_applied,
+                "variation_triggered": variation_triggered,
+                "variation_pulse_remaining": state.variation_pulse_remaining,
+            }
+            state.frames.append(frame_record)
+            write_manifest(state)
+            next_seed = image_feedback_source(state.seed_image, frame, feedback_strength)
+            if variation_applied:
+                next_seed = inject_feedback_noise(next_seed, state.frame_index, state.settings.variation_strength)
+                state.variation_pulse_remaining = max(state.variation_pulse_remaining - 1, 0)
+            state.seed_image = next_seed
             await websocket.send_json(
                 {
                     "type": "frame",
                     "frame": image_to_data_url(frame),
+                    "session_id": state.session_id,
+                    "frame_index": state.saved_frame_index,
+                    "generation_index": state.frame_index,
+                    "frame_url": frame_record["url"],
+                    "created_at": frame_record["created_at"],
                     "engine": engine.name,
                     "detail": engine.detail,
+                    "delta_from_previous": delta_from_previous,
+                    "stagnant_frames": state.stagnant_frames,
+                    "variation_applied": variation_applied,
+                    "variation_triggered": variation_triggered,
+                    "variation_pulse_remaining": state.variation_pulse_remaining,
+                    "effective_prompt": effective_prompt,
                 }
             )
             logger.info("Sent generated frame %s to %s", state.frame_index, client)
 
     producer_task = asyncio.create_task(produce_frames())
-    await websocket.send_json({"engine": engine.name, "detail": engine.detail})
+    await websocket.send_json(
+        {
+            "type": "session",
+            "session_id": state.session_id,
+            "output_url": f"/outputs/{state.session_id}",
+            "engine": engine.name,
+            "detail": engine.detail,
+        }
+    )
 
     try:
         while True:
@@ -139,6 +378,11 @@ async def stream_socket(websocket: WebSocket) -> None:
                     try:
                         state.seed_image = data_url_to_image(image_data)
                         state.frame_index = 0
+                        state.previous_frame_small = None
+                        state.stagnant_frames = 0
+                        state.variation_pulse_remaining = 0
+                        state.seed_image.save(state.session_dir / "seed.png", format="PNG")
+                        write_manifest(state)
                     except Exception:
                         logger.exception("Failed to decode seed frame from %s", client)
                         continue
@@ -152,13 +396,35 @@ async def stream_socket(websocket: WebSocket) -> None:
                     prompt=str(payload.get("prompt", state.settings.prompt)),
                     strength=clamp_strength(float(payload.get("strength", state.settings.strength))),
                     running=bool(payload.get("running", state.settings.running)),
+                    anti_stagnation_enabled=bool(
+                        payload.get("anti_stagnation_enabled", state.settings.anti_stagnation_enabled)
+                    ),
+                    stagnation_threshold=clamp_threshold(
+                        float(payload.get("stagnation_threshold", state.settings.stagnation_threshold))
+                    ),
+                    stagnation_window=clamp_window(
+                        int(payload.get("stagnation_window", state.settings.stagnation_window))
+                    ),
+                    variation_strength=clamp_variation_strength(
+                        float(payload.get("variation_strength", state.settings.variation_strength))
+                    ),
                 )
+                if not state.settings.anti_stagnation_enabled:
+                    state.stagnant_frames = 0
+                    state.variation_pulse_remaining = 0
                 logger.info(
-                    "Received settings from %s (running=%s, prompt=%r, strength=%.2f)",
+                    (
+                        "Received settings from %s (running=%s, prompt=%r, strength=%.2f, "
+                        "anti_stagnation=%s, threshold=%.4f, window=%s, variation=%.2f)"
+                    ),
                     client,
                     state.settings.running,
                     state.settings.prompt,
                     state.settings.strength,
+                    state.settings.anti_stagnation_enabled,
+                    state.settings.stagnation_threshold,
+                    state.settings.stagnation_window,
+                    state.settings.variation_strength,
                 )
             else:
                 logger.warning("Ignored unknown message type from %s: %r", client, message_type)
@@ -168,4 +434,5 @@ async def stream_socket(websocket: WebSocket) -> None:
         producer_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await producer_task
+        write_manifest(state, ended_at=utc_now_iso())
         logger.info("Stream producer stopped for %s", client)
