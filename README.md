@@ -53,7 +53,9 @@ uvicorn backend.app:app --reload --port 8000
 Backend status endpoint: <http://127.0.0.1:8000/api/status>
 
 Generated frames are saved under `outputs/<session-id>/` by default. Each folder includes `manifest.json`,
-`seed.png`, and numbered frame PNGs so past sessions can be loaded later from the timeline panel.
+versioned seed snapshots (`seed_000001.png`, `seed_000002.png`, ...), a latest-seed alias (`seed.png`),
+and numbered frame PNGs. The manifest links each frame to the active seed snapshot so restoring earlier
+timeline points can also restore the corresponding input seed.
 
 Optional output location:
 

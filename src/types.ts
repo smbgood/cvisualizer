@@ -12,6 +12,8 @@ export type TimelineFrame = {
   index: number;
   image: string;
   createdAt: string;
+  seedIndex?: number | null;
+  seedUrl?: string | null;
   prompt?: string;
   strength?: number;
   deltaFromPrevious?: number | null;

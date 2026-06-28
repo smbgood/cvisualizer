@@ -14,6 +14,24 @@ function createSnapshot(frame: string): SnapshotItem {
   };
 }
 
+async function imageUrlToDataUrl(imageUrl: string): Promise<string | null> {
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => reject(new Error(`Failed to read seed image: ${imageUrl}`));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [seedDataUrl, setSeedDataUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("radical surreal neon transformation");
@@ -81,6 +99,8 @@ export default function App() {
         index: number;
         url: string;
         created_at: string;
+        seed_index?: number | null;
+        seed_url?: string | null;
         prompt?: string;
         strength?: number;
         delta_from_previous?: number | null;
@@ -95,6 +115,8 @@ export default function App() {
       index: frame.index,
       image: backendAssetUrl(frame.url),
       createdAt: frame.created_at,
+      seedIndex: frame.seed_index ?? null,
+      seedUrl: frame.seed_url ? backendAssetUrl(frame.seed_url) : null,
       prompt: frame.prompt,
       strength: frame.strength,
       deltaFromPrevious: frame.delta_from_previous ?? null,
@@ -117,6 +139,30 @@ export default function App() {
       setViewedTimeline(null);
     }
   };
+
+  useEffect(() => {
+    if (!viewedTimeline || selectedFrameIndex === null) {
+      return;
+    }
+    const frame = timelineFrames.find((item) => item.index === selectedFrameIndex);
+    const seedUrl = frame?.seedUrl;
+    if (!seedUrl) {
+      return;
+    }
+
+    let cancelled = false;
+    const restoreSeed = async () => {
+      const restoredSeed = await imageUrlToDataUrl(seedUrl);
+      if (!cancelled && restoredSeed) {
+        setSeedDataUrl(restoredSeed);
+      }
+    };
+
+    void restoreSeed();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFrameIndex, timelineFrames, viewedTimeline]);
 
   const captureSnapshot = () => {
     if (!displayImage) {
@@ -144,7 +190,7 @@ export default function App() {
       </header>
 
       <section className="grid-top">
-        <SeedCanvas onSeedChange={setSeedDataUrl} />
+        <SeedCanvas onSeedChange={setSeedDataUrl} seedDataUrl={seedDataUrl} />
         <div className="stack">
           <LiveDisplay
             frameDataUrl={displayImage}

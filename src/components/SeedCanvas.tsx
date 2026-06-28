@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 type SeedCanvasProps = {
   onSeedChange: (dataUrl: string) => void;
+  seedDataUrl?: string | null;
 };
 
 const CANVAS_SIZE = 320;
@@ -16,7 +17,7 @@ function drawChecker(context: CanvasRenderingContext2D) {
   }
 }
 
-export default function SeedCanvas({ onSeedChange }: SeedCanvasProps) {
+export default function SeedCanvas({ onSeedChange, seedDataUrl }: SeedCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [brushSize, setBrushSize] = useState(14);
@@ -36,6 +37,24 @@ export default function SeedCanvas({ onSeedChange }: SeedCanvasProps) {
     drawChecker(context);
     onSeedChange(canvas.toDataURL("image/png"));
   }, [onSeedChange]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !seedDataUrl) {
+      return;
+    }
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const image = new Image();
+    image.onload = () => {
+      context.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      context.drawImage(image, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    };
+    image.src = seedDataUrl;
+  }, [seedDataUrl]);
 
   const paint = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !canvasRef.current) {

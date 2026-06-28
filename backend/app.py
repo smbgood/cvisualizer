@@ -52,8 +52,12 @@ class SessionState:
     session_dir: Path
     created_at: str
     frames: list[dict[str, object]]
+    seeds: list[dict[str, object]]
     frame_index: int = 0
     saved_frame_index: int = 0
+    saved_seed_index: int = 0
+    current_seed_index: Optional[int] = None
+    current_seed_filename: Optional[str] = None
     previous_frame_small: Optional[np.ndarray] = None
     stagnant_frames: int = 0
     variation_pulse_remaining: int = 0
@@ -147,6 +151,7 @@ def write_manifest(state: SessionState, ended_at: str | None = None) -> None:
         "engine": engine.name,
         "detail": engine.detail,
         "frames": state.frames,
+        "seeds": state.seeds,
     }
     (state.session_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -163,6 +168,13 @@ def read_manifest(session_id: str) -> dict[str, object]:
         for frame in frames:
             if isinstance(frame, dict) and isinstance(frame.get("filename"), str):
                 frame["url"] = session_output_url(session_id, frame["filename"])
+            if isinstance(frame, dict) and isinstance(frame.get("seed_filename"), str):
+                frame["seed_url"] = session_output_url(session_id, frame["seed_filename"])
+    seeds = manifest.get("seeds", [])
+    if isinstance(seeds, list):
+        for seed in seeds:
+            if isinstance(seed, dict) and isinstance(seed.get("filename"), str):
+                seed["url"] = session_output_url(session_id, seed["filename"])
     return manifest
 
 
@@ -241,6 +253,7 @@ async def stream_socket(websocket: WebSocket) -> None:
         session_dir=session_dir,
         created_at=utc_now_iso(),
         frames=[],
+        seeds=[],
     )
     write_manifest(state)
 
@@ -317,6 +330,13 @@ async def stream_socket(websocket: WebSocket) -> None:
                 "generation_index": state.frame_index,
                 "filename": filename,
                 "url": session_output_url(state.session_id, filename),
+                "seed_index": state.current_seed_index,
+                "seed_filename": state.current_seed_filename,
+                "seed_url": (
+                    session_output_url(state.session_id, state.current_seed_filename)
+                    if state.current_seed_filename
+                    else None
+                ),
                 "created_at": utc_now_iso(),
                 "prompt": state.settings.prompt,
                 "effective_prompt": effective_prompt,
@@ -381,7 +401,19 @@ async def stream_socket(websocket: WebSocket) -> None:
                         state.previous_frame_small = None
                         state.stagnant_frames = 0
                         state.variation_pulse_remaining = 0
+                        state.saved_seed_index += 1
+                        seed_filename = f"seed_{state.saved_seed_index:06d}.png"
+                        state.seed_image.save(state.session_dir / seed_filename, format="PNG")
                         state.seed_image.save(state.session_dir / "seed.png", format="PNG")
+                        seed_record = {
+                            "index": state.saved_seed_index,
+                            "filename": seed_filename,
+                            "url": session_output_url(state.session_id, seed_filename),
+                            "created_at": utc_now_iso(),
+                        }
+                        state.seeds.append(seed_record)
+                        state.current_seed_index = state.saved_seed_index
+                        state.current_seed_filename = seed_filename
                         write_manifest(state)
                     except Exception:
                         logger.exception("Failed to decode seed frame from %s", client)
