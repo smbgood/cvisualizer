@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+pillow
+numpy>=2.0.0,<2.4.0
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+diffusers==0.24.0
+transformers==4.36.2
+accelerate==0.25.0
+huggingface-hub==0.20.3
+streamdiffusion
