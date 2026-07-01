@@ -67,6 +67,9 @@ export default function TimelineScrubber({
               </button>
             ))}
           </div>
+          {selectedFrame?.effectivePrompt && (
+            <p className="muted">Selected effective prompt: {selectedFrame.effectivePrompt}</p>
+          )}
         </>
       )}
 

@@ -16,6 +16,12 @@ type StreamState = {
   variationApplied: boolean;
   variationTriggered: boolean;
   variationPulseRemaining: number;
+  promptEnhancementEnabled: boolean;
+  promptEnhancementInterval: number;
+  promptEnhancementStrength: number;
+  promptEnhancementRefreshed: boolean;
+  enhancedPrompt: string | null;
+  promptEnhancementLastFrame: number;
   effectivePrompt: string | null;
 };
 
@@ -54,6 +60,12 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
     variationApplied: false,
     variationTriggered: false,
     variationPulseRemaining: 0,
+    promptEnhancementEnabled: false,
+    promptEnhancementInterval: 12,
+    promptEnhancementStrength: 0.55,
+    promptEnhancementRefreshed: false,
+    enhancedPrompt: null,
+    promptEnhancementLastFrame: 0,
     effectivePrompt: null,
   });
 
@@ -142,6 +154,12 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
           variation_applied?: boolean;
           variation_triggered?: boolean;
           variation_pulse_remaining?: number;
+          prompt_enhancement_enabled?: boolean;
+          prompt_enhancement_interval?: number;
+          prompt_enhancement_strength?: number;
+          prompt_enhancement_refreshed?: boolean;
+          enhanced_prompt?: string;
+          prompt_enhancement_last_frame?: number;
           effective_prompt?: string;
         };
         if (payload.type === "session" && typeof payload.session_id === "string") {
@@ -155,6 +173,12 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
             variationApplied: false,
             variationTriggered: false,
             variationPulseRemaining: 0,
+            promptEnhancementEnabled: false,
+            promptEnhancementInterval: 12,
+            promptEnhancementStrength: 0.55,
+            promptEnhancementRefreshed: false,
+            enhancedPrompt: null,
+            promptEnhancementLastFrame: 0,
             effectivePrompt: null,
           }));
         }
@@ -190,6 +214,28 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
                     typeof payload.variation_pulse_remaining === "number"
                       ? payload.variation_pulse_remaining
                       : undefined,
+                  promptEnhancementEnabled:
+                    typeof payload.prompt_enhancement_enabled === "boolean"
+                      ? payload.prompt_enhancement_enabled
+                      : undefined,
+                  promptEnhancementInterval:
+                    typeof payload.prompt_enhancement_interval === "number"
+                      ? payload.prompt_enhancement_interval
+                      : undefined,
+                  promptEnhancementStrength:
+                    typeof payload.prompt_enhancement_strength === "number"
+                      ? payload.prompt_enhancement_strength
+                      : undefined,
+                  promptEnhancementRefreshed:
+                    typeof payload.prompt_enhancement_refreshed === "boolean"
+                      ? payload.prompt_enhancement_refreshed
+                      : undefined,
+                  enhancedPrompt:
+                    typeof payload.enhanced_prompt === "string" ? payload.enhanced_prompt : undefined,
+                  promptEnhancementLastFrame:
+                    typeof payload.prompt_enhancement_last_frame === "number"
+                      ? payload.prompt_enhancement_last_frame
+                      : undefined,
                   effectivePrompt:
                     typeof payload.effective_prompt === "string" ? payload.effective_prompt : undefined,
                 },
@@ -201,6 +247,21 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
               variationTriggered: Boolean(payload.variation_triggered),
               variationPulseRemaining:
                 typeof payload.variation_pulse_remaining === "number" ? payload.variation_pulse_remaining : 0,
+              promptEnhancementEnabled: Boolean(payload.prompt_enhancement_enabled),
+              promptEnhancementInterval:
+                typeof payload.prompt_enhancement_interval === "number"
+                  ? payload.prompt_enhancement_interval
+                  : current.promptEnhancementInterval,
+              promptEnhancementStrength:
+                typeof payload.prompt_enhancement_strength === "number"
+                  ? payload.prompt_enhancement_strength
+                  : current.promptEnhancementStrength,
+              promptEnhancementRefreshed: Boolean(payload.prompt_enhancement_refreshed),
+              enhancedPrompt: typeof payload.enhanced_prompt === "string" ? payload.enhanced_prompt : null,
+              promptEnhancementLastFrame:
+                typeof payload.prompt_enhancement_last_frame === "number"
+                  ? payload.prompt_enhancement_last_frame
+                  : 0,
               effectivePrompt: typeof payload.effective_prompt === "string" ? payload.effective_prompt : null,
             };
           });

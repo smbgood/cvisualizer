@@ -27,6 +27,14 @@ except Exception:
     except Exception:
         raise
 
+try:
+    from backend.prompt_enhancer import PromptEnhancer
+except Exception:
+    try:
+        from .prompt_enhancer import PromptEnhancer
+    except Exception:
+        raise
+
 
 def image_to_data_url(image: Image.Image) -> str:
     buffer = BytesIO()
@@ -61,6 +69,8 @@ class SessionState:
     previous_frame_small: Optional[np.ndarray] = None
     stagnant_frames: int = 0
     variation_pulse_remaining: int = 0
+    enhanced_prompt: Optional[str] = None
+    prompt_enhancement_last_frame: int = 0
 
 
 DEFAULT_PROMPT = "radical surreal neon transformation"
@@ -80,6 +90,14 @@ def clamp_window(value: int) -> int:
 
 
 def clamp_variation_strength(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
+
+
+def clamp_prompt_enhancement_interval(value: int) -> int:
+    return min(max(value, 1), 120)
+
+
+def clamp_prompt_enhancement_strength(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
 
@@ -189,7 +207,9 @@ app.add_middleware(
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_ROOT)), name="outputs")
 
 engine = StreamDiffusionEngine.try_create_from_env() or MockEngine()
+prompt_enhancer = PromptEnhancer.from_env()
 logger.info("Inference engine selected: %s (%s)", engine.name, engine.detail)
+logger.info("Prompt enhancer status: %s", prompt_enhancer.detail)
 
 
 @app.get("/api/status")
@@ -248,7 +268,14 @@ async def stream_socket(websocket: WebSocket) -> None:
     session_dir.mkdir(parents=True, exist_ok=True)
     state = SessionState(
         seed_image=None,
-        settings=InferenceSettings(prompt=DEFAULT_PROMPT, strength=0.85, running=True),
+        settings=InferenceSettings(
+            prompt=DEFAULT_PROMPT,
+            strength=0.85,
+            running=True,
+            prompt_enhancement_enabled=False,
+            prompt_enhancement_interval=12,
+            prompt_enhancement_strength=0.55,
+        ),
         session_id=session_id,
         session_dir=session_dir,
         created_at=utc_now_iso(),
@@ -276,7 +303,23 @@ async def stream_socket(websocket: WebSocket) -> None:
                 and state.variation_pulse_remaining > 0
                 and state.settings.variation_strength > 0
             )
-            effective_prompt = build_effective_prompt(state.settings.prompt, variation_applied)
+            (
+                enhancement_base_prompt,
+                refreshed_enhanced_prompt,
+                prompt_enhancement_last_frame,
+                prompt_enhancement_refreshed,
+            ) = prompt_enhancer.enhance_if_due(
+                base_prompt=state.settings.prompt,
+                strength=state.settings.prompt_enhancement_strength,
+                frame_index=state.frame_index,
+                interval=state.settings.prompt_enhancement_interval,
+                enabled=state.settings.prompt_enhancement_enabled,
+                cached_prompt=state.enhanced_prompt,
+                last_enhanced_frame=state.prompt_enhancement_last_frame,
+            )
+            state.enhanced_prompt = refreshed_enhanced_prompt
+            state.prompt_enhancement_last_frame = prompt_enhancement_last_frame
+            effective_prompt = build_effective_prompt(enhancement_base_prompt, variation_applied)
             transform_settings = replace(state.settings, prompt=effective_prompt)
             try:
                 frame = engine.transform(state.seed_image, transform_settings, state.frame_index)
@@ -347,6 +390,12 @@ async def stream_socket(websocket: WebSocket) -> None:
                 "variation_applied": variation_applied,
                 "variation_triggered": variation_triggered,
                 "variation_pulse_remaining": state.variation_pulse_remaining,
+                "prompt_enhancement_enabled": state.settings.prompt_enhancement_enabled,
+                "prompt_enhancement_interval": state.settings.prompt_enhancement_interval,
+                "prompt_enhancement_strength": state.settings.prompt_enhancement_strength,
+                "prompt_enhancement_refreshed": prompt_enhancement_refreshed,
+                "enhanced_prompt": state.enhanced_prompt,
+                "prompt_enhancement_last_frame": state.prompt_enhancement_last_frame,
             }
             state.frames.append(frame_record)
             write_manifest(state)
@@ -371,6 +420,12 @@ async def stream_socket(websocket: WebSocket) -> None:
                     "variation_applied": variation_applied,
                     "variation_triggered": variation_triggered,
                     "variation_pulse_remaining": state.variation_pulse_remaining,
+                    "prompt_enhancement_enabled": state.settings.prompt_enhancement_enabled,
+                    "prompt_enhancement_interval": state.settings.prompt_enhancement_interval,
+                    "prompt_enhancement_strength": state.settings.prompt_enhancement_strength,
+                    "prompt_enhancement_refreshed": prompt_enhancement_refreshed,
+                    "enhanced_prompt": state.enhanced_prompt,
+                    "prompt_enhancement_last_frame": state.prompt_enhancement_last_frame,
                     "effective_prompt": effective_prompt,
                 }
             )
@@ -401,6 +456,8 @@ async def stream_socket(websocket: WebSocket) -> None:
                         state.previous_frame_small = None
                         state.stagnant_frames = 0
                         state.variation_pulse_remaining = 0
+                        state.enhanced_prompt = None
+                        state.prompt_enhancement_last_frame = 0
                         state.saved_seed_index += 1
                         seed_filename = f"seed_{state.saved_seed_index:06d}.png"
                         state.seed_image.save(state.session_dir / seed_filename, format="PNG")
@@ -424,6 +481,7 @@ async def stream_socket(websocket: WebSocket) -> None:
 
             elif message_type == "settings":
                 payload = message.get("payload", {})
+                previous_prompt = state.settings.prompt
                 state.settings = InferenceSettings(
                     prompt=str(payload.get("prompt", state.settings.prompt)),
                     strength=clamp_strength(float(payload.get("strength", state.settings.strength))),
@@ -440,14 +498,38 @@ async def stream_socket(websocket: WebSocket) -> None:
                     variation_strength=clamp_variation_strength(
                         float(payload.get("variation_strength", state.settings.variation_strength))
                     ),
+                    prompt_enhancement_enabled=bool(
+                        payload.get("prompt_enhancement_enabled", state.settings.prompt_enhancement_enabled)
+                    ),
+                    prompt_enhancement_interval=clamp_prompt_enhancement_interval(
+                        int(
+                            payload.get(
+                                "prompt_enhancement_interval", state.settings.prompt_enhancement_interval
+                            )
+                        )
+                    ),
+                    prompt_enhancement_strength=clamp_prompt_enhancement_strength(
+                        float(
+                            payload.get(
+                                "prompt_enhancement_strength", state.settings.prompt_enhancement_strength
+                            )
+                        )
+                    ),
                 )
                 if not state.settings.anti_stagnation_enabled:
                     state.stagnant_frames = 0
                     state.variation_pulse_remaining = 0
+                if (
+                    not state.settings.prompt_enhancement_enabled
+                    or state.settings.prompt != previous_prompt
+                ):
+                    state.enhanced_prompt = None
+                    state.prompt_enhancement_last_frame = 0
                 logger.info(
                     (
                         "Received settings from %s (running=%s, prompt=%r, strength=%.2f, "
-                        "anti_stagnation=%s, threshold=%.4f, window=%s, variation=%.2f)"
+                        "anti_stagnation=%s, threshold=%.4f, window=%s, variation=%.2f, "
+                        "prompt_enhancement=%s, interval=%s, enhancer_strength=%.2f)"
                     ),
                     client,
                     state.settings.running,
@@ -457,6 +539,9 @@ async def stream_socket(websocket: WebSocket) -> None:
                     state.settings.stagnation_threshold,
                     state.settings.stagnation_window,
                     state.settings.variation_strength,
+                    state.settings.prompt_enhancement_enabled,
+                    state.settings.prompt_enhancement_interval,
+                    state.settings.prompt_enhancement_strength,
                 )
             else:
                 logger.warning("Ignored unknown message type from %s: %r", client, message_type)

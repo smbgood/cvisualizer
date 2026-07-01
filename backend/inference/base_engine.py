@@ -13,6 +13,9 @@ class InferenceSettings:
   stagnation_threshold: float = 0.012
   stagnation_window: int = 6
   variation_strength: float = 0.35
+  prompt_enhancement_enabled: bool = False
+  prompt_enhancement_interval: int = 12
+  prompt_enhancement_strength: float = 0.55
 
 
 class InferenceEngine:

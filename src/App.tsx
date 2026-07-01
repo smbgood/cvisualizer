@@ -41,6 +41,9 @@ export default function App() {
   const [stagnationThreshold, setStagnationThreshold] = useState(0.012);
   const [stagnationWindow, setStagnationWindow] = useState(6);
   const [variationStrength, setVariationStrength] = useState(0.35);
+  const [promptEnhancementEnabled, setPromptEnhancementEnabled] = useState(false);
+  const [promptEnhancementInterval, setPromptEnhancementInterval] = useState(12);
+  const [promptEnhancementStrength, setPromptEnhancementStrength] = useState(0.55);
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
@@ -56,8 +59,22 @@ export default function App() {
       stagnation_threshold: stagnationThreshold,
       stagnation_window: stagnationWindow,
       variation_strength: variationStrength,
+      prompt_enhancement_enabled: promptEnhancementEnabled,
+      prompt_enhancement_interval: promptEnhancementInterval,
+      prompt_enhancement_strength: promptEnhancementStrength,
     }),
-    [prompt, strength, running, antiStagnationEnabled, stagnationThreshold, stagnationWindow, variationStrength],
+    [
+      prompt,
+      strength,
+      running,
+      antiStagnationEnabled,
+      stagnationThreshold,
+      stagnationWindow,
+      variationStrength,
+      promptEnhancementEnabled,
+      promptEnhancementInterval,
+      promptEnhancementStrength,
+    ],
   );
 
   const stream = useInferenceStream(seedDataUrl, settings);
@@ -108,6 +125,12 @@ export default function App() {
         variation_applied?: boolean;
         variation_triggered?: boolean;
         variation_pulse_remaining?: number;
+        prompt_enhancement_enabled?: boolean;
+        prompt_enhancement_interval?: number;
+        prompt_enhancement_strength?: number;
+        prompt_enhancement_refreshed?: boolean;
+        enhanced_prompt?: string | null;
+        prompt_enhancement_last_frame?: number;
         effective_prompt?: string;
       }>;
     };
@@ -124,6 +147,12 @@ export default function App() {
       variationApplied: frame.variation_applied,
       variationTriggered: frame.variation_triggered,
       variationPulseRemaining: frame.variation_pulse_remaining,
+      promptEnhancementEnabled: frame.prompt_enhancement_enabled,
+      promptEnhancementInterval: frame.prompt_enhancement_interval,
+      promptEnhancementStrength: frame.prompt_enhancement_strength,
+      promptEnhancementRefreshed: frame.prompt_enhancement_refreshed,
+      enhancedPrompt: frame.enhanced_prompt ?? null,
+      promptEnhancementLastFrame: frame.prompt_enhancement_last_frame,
       effectivePrompt: frame.effective_prompt,
     }));
 
@@ -230,6 +259,16 @@ export default function App() {
               </label>
             </div>
             <div className="control-row">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={promptEnhancementEnabled}
+                  onChange={(event) => setPromptEnhancementEnabled(event.target.checked)}
+                />
+                <span>Enable prompt enhancement</span>
+              </label>
+            </div>
+            <div className="control-row">
               <label>
                 Stagnation threshold {stagnationThreshold.toFixed(4)}
                 <input
@@ -271,11 +310,46 @@ export default function App() {
                 />
               </label>
             </div>
+            <div className="control-row">
+              <label>
+                Prompt refresh interval {promptEnhancementInterval} frames
+                <input
+                  type="range"
+                  min={1}
+                  max={60}
+                  step={1}
+                  value={promptEnhancementInterval}
+                  onChange={(event) => setPromptEnhancementInterval(Number(event.target.value))}
+                  disabled={!promptEnhancementEnabled}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Prompt enhancement strength {promptEnhancementStrength.toFixed(2)}
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={promptEnhancementStrength}
+                  onChange={(event) => setPromptEnhancementStrength(Number(event.target.value))}
+                  disabled={!promptEnhancementEnabled}
+                />
+              </label>
+            </div>
             <p className="muted">
               Delta: {stream.deltaFromPrevious === null ? "n/a" : stream.deltaFromPrevious.toFixed(4)} | stagnant:{" "}
               {stream.stagnantFrames} | pulse: {stream.variationPulseRemaining}{" "}
               {stream.variationApplied ? "(variation active)" : ""}
             </p>
+            <p className="muted">
+              Prompt enhancer: {stream.promptEnhancementEnabled ? "on" : "off"} | interval:{" "}
+              {stream.promptEnhancementInterval} | refreshed: {stream.promptEnhancementRefreshed ? "yes" : "no"}
+            </p>
+            {stream.effectivePrompt && (
+              <p className="muted">Effective prompt: {stream.effectivePrompt}</p>
+            )}
             <div className="control-row">
               <button type="button" onClick={() => setRunning((value) => !value)}>
                 {running ? "Pause Generation" : "Resume Generation"}

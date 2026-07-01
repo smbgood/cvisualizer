@@ -75,6 +75,10 @@ Optional environment variables:
 - `CVIS_T_INDEX_LIST` (default: `0,16,32`; lower values reinterpret the source more aggressively)
 - `CVIS_CFG_TYPE` (default: `none`)
 - `CVIS_GUIDANCE_SCALE` (default: `0.0`)
+- `CVIS_PROMPT_ENHANCER_MODEL` (default: `google/flan-t5-small`)
+- `CVIS_PROMPT_ENHANCER_DEVICE` (`auto`, `cpu`, or `cuda`)
+- `CVIS_PROMPT_ENHANCER_MAX_NEW_TOKENS` (default: `60`)
+- `CVIS_PROMPT_ENHANCER_LOCAL_ONLY` (`1` to avoid model downloads and use local cache only)
 
 Example:
 
@@ -111,6 +115,20 @@ When triggered, the backend briefly applies:
 - small deterministic noise on the feedback seed
 
 Per-frame diagnostics (`delta_from_previous`, `stagnant_frames`, `variation_applied`) are written to each session `manifest.json`.
+
+## Prompt Enhancement Controls
+
+The streaming loop can now periodically rewrite your prompt to keep outputs more descriptive and quality-focused.
+
+- **Enable prompt enhancement**: turns periodic prompt rewriting on/off
+- **Prompt refresh interval**: number of generated frames between prompt refreshes
+- **Prompt enhancement strength**: controls how aggressively the rewritten prompt diverges from your base prompt
+
+Behavior notes:
+
+- Prompt enhancement runs locally in the backend through `transformers` and lazy-loads only when enabled.
+- If the configured model is unavailable, the backend falls back to a deterministic quality/descriptiveness suffix strategy.
+- `effective_prompt` and prompt-enhancement diagnostics are recorded per frame in each session `manifest.json`.
 
 ## Troubleshooting
 

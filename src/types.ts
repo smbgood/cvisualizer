@@ -6,6 +6,9 @@ export type StreamSettings = {
   stagnation_threshold: number;
   stagnation_window: number;
   variation_strength: number;
+  prompt_enhancement_enabled: boolean;
+  prompt_enhancement_interval: number;
+  prompt_enhancement_strength: number;
 };
 
 export type TimelineFrame = {
@@ -21,6 +24,12 @@ export type TimelineFrame = {
   variationApplied?: boolean;
   variationTriggered?: boolean;
   variationPulseRemaining?: number;
+  promptEnhancementEnabled?: boolean;
+  promptEnhancementInterval?: number;
+  promptEnhancementStrength?: number;
+  promptEnhancementRefreshed?: boolean;
+  enhancedPrompt?: string | null;
+  promptEnhancementLastFrame?: number;
   effectivePrompt?: string;
 };
 
