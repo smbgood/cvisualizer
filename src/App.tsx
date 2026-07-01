@@ -1,18 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import LiveDisplay from "./components/LiveDisplay";
 import SeedCanvas from "./components/SeedCanvas";
-import SnapshotGallery, { type SnapshotItem } from "./components/SnapshotGallery";
+import AnimationGallery from "./components/AnimationGallery";
 import TimelineScrubber from "./components/TimelineScrubber";
 import { BACKEND_URL, backendAssetUrl, useInferenceStream } from "./hooks/useInferenceStream";
-import type { SavedSession, StreamSettings, TimelineFrame } from "./types";
-
-function createSnapshot(frame: string): SnapshotItem {
-  return {
-    id: crypto.randomUUID(),
-    image: frame,
-    createdAt: Date.now(),
-  };
-}
+import type { AnimationItem, SavedSession, StreamSettings, TimelineFrame } from "./types";
 
 async function imageUrlToDataUrl(imageUrl: string): Promise<string | null> {
   try {
@@ -51,8 +43,12 @@ export default function App() {
   const [studyFrameStrength, setStudyFrameStrength] = useState(0.2);
   const [studyFrameEffort, setStudyFrameEffort] = useState(1);
   const [studyFrameDelay, setStudyFrameDelay] = useState(0.6);
-  const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
-  const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
+  const [animationFrameCount, setAnimationFrameCount] = useState(30);
+  const [animationDurationSeconds, setAnimationDurationSeconds] = useState(5);
+  const [animations, setAnimations] = useState<AnimationItem[]>([]);
+  const [selectedAnimationId, setSelectedAnimationId] = useState<string | null>(null);
+  const [animationBusyFrameIndex, setAnimationBusyFrameIndex] = useState<number | null>(null);
+  const [animationError, setAnimationError] = useState<string | null>(null);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
   const [viewedTimeline, setViewedTimeline] = useState<{ id: string; frames: TimelineFrame[] } | null>(null);
@@ -100,8 +96,7 @@ export default function App() {
     selectedFrameIndex === null
       ? null
       : timelineFrames.find((frame) => frame.index === selectedFrameIndex)?.image ?? null;
-  const displayImage =
-    snapshots.find((item) => item.id === selectedSnapshotId)?.image ?? selectedTimelineFrame ?? stream.latestFrame;
+  const displayImage = selectedTimelineFrame ?? stream.latestFrame;
 
   const refreshSavedSessions = async () => {
     const response = await fetch(`${BACKEND_URL}/api/sessions`);
@@ -184,12 +179,10 @@ export default function App() {
     }));
 
     setViewedTimeline({ id: sessionId, frames });
-    setSelectedSnapshotId(null);
     setSelectedFrameIndex(frames[frames.length - 1]?.index ?? null);
   };
 
   const selectTimelineFrame = (frameIndex: number | null) => {
-    setSelectedSnapshotId(null);
     setSelectedFrameIndex(frameIndex);
     if (frameIndex === null) {
       setViewedTimeline(null);
@@ -203,7 +196,6 @@ export default function App() {
 
     setSubmittedSeedDataUrl(draftSeedDataUrl);
     setViewedTimeline(null);
-    setSelectedSnapshotId(null);
     setSelectedFrameIndex(null);
     setRunning(true);
   };
@@ -212,7 +204,6 @@ export default function App() {
     setRunning(false);
     setSubmittedSeedDataUrl(null);
     setViewedTimeline(null);
-    setSelectedSnapshotId(null);
     setSelectedFrameIndex(null);
     setSessionKey((value) => value + 1);
     void refreshSavedSessions();
@@ -242,21 +233,78 @@ export default function App() {
     };
   }, [selectedFrameIndex, timelineFrames, viewedTimeline]);
 
-  const captureSnapshot = () => {
-    if (!displayImage) {
+  const createAnimationFromFrame = async (frame: TimelineFrame) => {
+    if (animationBusyFrameIndex !== null) {
       return;
     }
 
-    const next = [createSnapshot(displayImage), ...snapshots];
-    setSnapshots(next);
-    setSelectedSnapshotId(next[0].id);
+    setAnimationError(null);
+    setAnimationBusyFrameIndex(frame.index);
+    try {
+      const sourceDataUrl = await imageUrlToDataUrl(frame.image);
+      if (!sourceDataUrl) {
+        throw new Error("Unable to read the selected frame.");
+      }
+
+      const response = await fetch(`${BACKEND_URL}/api/animations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source_image: sourceDataUrl,
+          prompt: frame.effectivePrompt ?? frame.prompt ?? prompt,
+          strength,
+          frame_count: animationFrameCount,
+          duration_seconds: animationDurationSeconds,
+          variation_strength: 0.2,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || "Animation generation failed.");
+      }
+
+      const data = (await response.json()) as {
+        id: string;
+        created_at: string;
+        prompt: string;
+        effective_prompt: string;
+        frame_count: number;
+        duration_seconds: number;
+        frames: Array<{ index: number; url: string; created_at: string }>;
+      };
+
+      const nextAnimation: AnimationItem = {
+        id: data.id,
+        createdAt: data.created_at,
+        prompt: data.prompt,
+        effectivePrompt: data.effective_prompt,
+        frameCount: data.frame_count,
+        durationSeconds: data.duration_seconds,
+        sourceFrameIndex: frame.index,
+        frames: data.frames.map((item) => ({
+          index: item.index,
+          image: backendAssetUrl(item.url),
+          createdAt: item.created_at,
+        })),
+      };
+
+      setAnimations((current) => [nextAnimation, ...current]);
+      setSelectedAnimationId(nextAnimation.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Animation generation failed.";
+      setAnimationError(message);
+    } finally {
+      setAnimationBusyFrameIndex(null);
+    }
   };
 
-  const removeSnapshot = (id: string) => {
-    const next = snapshots.filter((item) => item.id !== id);
-    setSnapshots(next);
-    if (selectedSnapshotId === id) {
-      setSelectedSnapshotId(next[0]?.id ?? null);
+  const removeAnimation = (id: string) => {
+    const next = animations.filter((item) => item.id !== id);
+    setAnimations(next);
+    if (selectedAnimationId === id) {
+      setSelectedAnimationId(next[0]?.id ?? null);
     }
   };
 
@@ -460,6 +508,32 @@ export default function App() {
                 />
               </label>
             </div>
+            <div className="control-row">
+              <label>
+                Animation frames {animationFrameCount}
+                <input
+                  type="range"
+                  min={8}
+                  max={120}
+                  step={1}
+                  value={animationFrameCount}
+                  onChange={(event) => setAnimationFrameCount(Number(event.target.value))}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Animation duration {animationDurationSeconds.toFixed(1)}s
+                <input
+                  type="range"
+                  min={1}
+                  max={15}
+                  step={0.5}
+                  value={animationDurationSeconds}
+                  onChange={(event) => setAnimationDurationSeconds(Number(event.target.value))}
+                />
+              </label>
+            </div>
             <p className="muted">
               Delta: {stream.deltaFromPrevious === null ? "n/a" : stream.deltaFromPrevious.toFixed(4)} | stagnant:{" "}
               {stream.stagnantFrames} | pulse: {stream.variationPulseRemaining}{" "}
@@ -476,10 +550,11 @@ export default function App() {
               <button type="button" onClick={() => setRunning((value) => !value)}>
                 {running ? "Pause Generation" : "Resume Generation"}
               </button>
-              <button type="button" onClick={captureSnapshot} disabled={!displayImage}>
-                Capture Snapshot
-              </button>
             </div>
+            {animationBusyFrameIndex !== null && (
+              <p className="muted">Generating animation from frame {animationBusyFrameIndex}...</p>
+            )}
+            {animationError && <p className="muted">Animation error: {animationError}</p>}
           </section>
         </div>
       </section>
@@ -491,15 +566,17 @@ export default function App() {
         savedSessions={savedSessions}
         viewedSessionId={viewedTimeline?.id ?? null}
         onSelectFrame={selectTimelineFrame}
+        onCreateAnimation={createAnimationFromFrame}
+        creatingAnimationFrameIndex={animationBusyFrameIndex}
         onLoadSession={loadSavedSession}
         onRefreshSessions={refreshSavedSessions}
       />
 
-      <SnapshotGallery
-        snapshots={snapshots}
-        selectedId={selectedSnapshotId}
-        onSelect={setSelectedSnapshotId}
-        onRemove={removeSnapshot}
+      <AnimationGallery
+        animations={animations}
+        selectedId={selectedAnimationId}
+        onSelect={setSelectedAnimationId}
+        onRemove={removeAnimation}
       />
     </main>
   );

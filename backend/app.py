@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
+from pydantic import BaseModel, Field
 
 try:
     from backend.inference import InferenceSettings, MockEngine, StreamDiffusionEngine
@@ -75,6 +76,7 @@ class SessionState:
 
 DEFAULT_PROMPT = "radical surreal neon transformation"
 VARIATION_SUFFIX = ", fresh composition, altered color palette, unexpected details"
+ANIMATION_MOTION_SUFFIX = ", cinematic motion, natural continuation, subtle temporal progression"
 
 
 def clamp_strength(value: float) -> float:
@@ -117,6 +119,14 @@ def clamp_study_frame_delay(value: float) -> float:
     return min(max(value, 0.05), 3.0)
 
 
+def clamp_animation_frame_count(value: int) -> int:
+    return min(max(value, 2), 240)
+
+
+def clamp_animation_duration(value: float) -> float:
+    return min(max(value, 0.5), 30.0)
+
+
 def image_feedback_source(previous: Image.Image, generated: Image.Image, strength: float) -> Image.Image:
     base = previous.convert("RGB").resize(generated.size)
     feedback_weight = clamp_strength(strength)
@@ -137,6 +147,11 @@ def build_effective_prompt(prompt: str, variation_applied: bool) -> str:
     if not variation_applied:
         return base_prompt
     return f"{base_prompt}{VARIATION_SUFFIX}"
+
+
+def build_animation_prompt(prompt: str) -> str:
+    base_prompt = prompt.strip() or DEFAULT_PROMPT
+    return f"{base_prompt}{ANIMATION_MOTION_SUFFIX}"
 
 
 def inject_feedback_noise(source: Image.Image, frame_index: int, variation_strength: float) -> Image.Image:
@@ -225,8 +240,15 @@ def create_session_id() -> str:
     return f"{timestamp}-{uuid4().hex[:8]}"
 
 
+def create_animation_id() -> str:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"anim-{timestamp}-{uuid4().hex[:8]}"
+
+
 OUTPUT_ROOT = Path(os.environ.get("CVIS_OUTPUT_DIR", Path(__file__).resolve().parents[1] / "outputs")).resolve()
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+ANIMATIONS_ROOT = (OUTPUT_ROOT / "animations").resolve()
+ANIMATIONS_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def session_output_url(session_id: str, filename: str) -> str:
@@ -273,6 +295,31 @@ def read_manifest(session_id: str) -> dict[str, object]:
             if isinstance(seed, dict) and isinstance(seed.get("filename"), str):
                 seed["url"] = session_output_url(session_id, seed["filename"])
     return manifest
+
+
+class AnimationRequest(BaseModel):
+    source_image: str
+    prompt: str = Field(default=DEFAULT_PROMPT)
+    strength: float = Field(default=0.85)
+    frame_count: int = Field(default=30)
+    duration_seconds: float = Field(default=5.0)
+    variation_strength: float = Field(default=0.2)
+
+
+class AnimationFrameResponse(BaseModel):
+    index: int
+    url: str
+    created_at: str
+
+
+class AnimationResponse(BaseModel):
+    id: str
+    created_at: str
+    prompt: str
+    effective_prompt: str
+    frame_count: int
+    duration_seconds: float
+    frames: list[AnimationFrameResponse]
 
 
 app = FastAPI(title="cvisualizer-backend")
@@ -335,6 +382,94 @@ def list_sessions() -> dict[str, list[dict[str, object]]]:
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: str) -> dict[str, object]:
     return read_manifest(session_id)
+
+
+@app.post("/api/animations", response_model=AnimationResponse)
+def create_animation(payload: AnimationRequest) -> AnimationResponse:
+    try:
+        source_image = data_url_to_image(payload.source_image)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid source image: {exc}") from exc
+
+    frame_count = clamp_animation_frame_count(payload.frame_count)
+    duration_seconds = clamp_animation_duration(payload.duration_seconds)
+    strength = clamp_strength(payload.strength)
+    variation_strength = clamp_variation_strength(payload.variation_strength)
+    effective_prompt = build_animation_prompt(payload.prompt)
+    animation_id = create_animation_id()
+    animation_dir = (ANIMATIONS_ROOT / animation_id).resolve()
+    animation_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = InferenceSettings(
+        prompt=effective_prompt,
+        strength=strength,
+        running=True,
+        anti_stagnation_enabled=False,
+        stagnation_threshold=0.012,
+        stagnation_window=6,
+        variation_strength=variation_strength,
+        prompt_enhancement_enabled=False,
+        prompt_enhancement_interval=12,
+        prompt_enhancement_strength=0.55,
+        study_frames_enabled=False,
+        study_frame_count=0,
+        study_frame_strength=0.0,
+        study_frame_effort=1,
+        study_frame_delay=0.05,
+    )
+
+    seed = source_image
+    created_at = utc_now_iso()
+    frames: list[AnimationFrameResponse] = []
+
+    for frame_index in range(1, frame_count + 1):
+        try:
+            frame = engine.transform(seed, settings, frame_index)
+        except Exception as exc:
+            logger.exception("Animation generation failed (%s, frame %s)", animation_id, frame_index)
+            raise HTTPException(status_code=500, detail=f"Animation frame generation failed: {exc}") from exc
+
+        filename = f"frame_{frame_index:06d}.png"
+        frame_path = animation_dir / filename
+        frame.save(frame_path, format="PNG")
+        frame_url = f"/outputs/animations/{animation_id}/{filename}"
+        frames.append(
+            AnimationFrameResponse(
+                index=frame_index,
+                url=frame_url,
+                created_at=utc_now_iso(),
+            )
+        )
+
+        next_seed = image_feedback_source(seed, frame, strength)
+        if variation_strength > 0:
+            next_seed = inject_feedback_noise(next_seed, frame_index, variation_strength)
+        seed = next_seed
+
+    metadata = {
+        "id": animation_id,
+        "created_at": created_at,
+        "engine": engine.name,
+        "detail": engine.detail,
+        "prompt": payload.prompt,
+        "effective_prompt": effective_prompt,
+        "frame_count": frame_count,
+        "duration_seconds": duration_seconds,
+        "strength": strength,
+        "variation_strength": variation_strength,
+        "frames": [frame.model_dump() for frame in frames],
+    }
+    (animation_dir / "manifest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    return AnimationResponse(
+        id=animation_id,
+        created_at=created_at,
+        prompt=payload.prompt,
+        effective_prompt=effective_prompt,
+        frame_count=frame_count,
+        duration_seconds=duration_seconds,
+        frames=frames,
+    )
 
 
 @app.websocket("/ws/stream")

@@ -5,7 +5,7 @@ Local Windows prototype for interactive AI image visualization:
 - Draw pixels or import a seed image.
 - Stream continuously transforming frames in the main display.
 - Scrub through generated frames on a timeline.
-- Capture snapshots and review them as thumbnails.
+- Create timeline-driven animations and review them as playable previews.
 - Re-open saved output sessions from separate local folders.
 
 ## Architecture
@@ -147,6 +147,6 @@ Behavior notes:
 
 ## Notes
 
-- Snapshot capture stores the current displayed frame, not the original seed.
-- Snapshot gallery is session-local (in-memory) in this MVP.
+- Animations are generated from selected timeline frames and stored as PNG frame sequences.
+- Animation gallery state is session-local (in-memory) in this MVP.
 - Timeline frames are persisted to local session folders and served by the backend.

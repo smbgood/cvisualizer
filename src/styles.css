@@ -191,8 +191,13 @@ button,
   padding-bottom: 0.3rem;
 }
 
+.filmstrip-item {
+  min-width: 118px;
+  display: grid;
+  gap: 0.3rem;
+}
+
 .filmstrip-frame {
-  min-width: 72px;
   border: 1px solid #374673;
   background: #0f162b;
   color: #d7def5;
@@ -203,10 +208,15 @@ button,
 }
 
 .filmstrip-frame img {
-  width: 56px;
+  width: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 4px;
   object-fit: cover;
+}
+
+.filmstrip-action {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.4rem;
 }
 
 .filmstrip-frame.study-frame {
@@ -280,6 +290,23 @@ button,
 
 .muted {
   color: #afbad5;
+}
+
+.animation-player {
+  margin-top: 0.9rem;
+  border: 1px solid #374673;
+  border-radius: 8px;
+  padding: 0.6rem;
+  background: #0f162b;
+}
+
+.animation-player img {
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #31406a;
 }
 
 @media (max-width: 980px) {

@@ -7,6 +7,8 @@ type TimelineScrubberProps = {
   savedSessions: SavedSession[];
   viewedSessionId: string | null;
   onSelectFrame: (frameIndex: number | null) => void;
+  onCreateAnimation: (frame: TimelineFrame) => void;
+  creatingAnimationFrameIndex: number | null;
   onLoadSession: (sessionId: string) => void;
   onRefreshSessions: () => void;
 };
@@ -18,6 +20,8 @@ export default function TimelineScrubber({
   savedSessions,
   viewedSessionId,
   onSelectFrame,
+  onCreateAnimation,
+  creatingAnimationFrameIndex,
   onLoadSession,
   onRefreshSessions,
 }: TimelineScrubberProps) {
@@ -62,20 +66,29 @@ export default function TimelineScrubber({
           </div>
           <div className="filmstrip">
             {frames.map((frame) => (
-              <button
-                type="button"
-                key={frame.index}
-                className={`filmstrip-frame ${selectedFrameIndex === frame.index ? "selected" : ""} ${
-                  frame.frameKind === "study" ? "study-frame" : ""
-                }`}
-                onClick={() => onSelectFrame(frame.index)}
-              >
-                <img src={frame.image} alt={`Frame ${frame.index}`} />
-                <span>
-                  {frame.index}
-                  {frame.frameKind === "study" ? " study" : ""}
-                </span>
-              </button>
+              <div key={frame.index} className="filmstrip-item">
+                <button
+                  type="button"
+                  className={`filmstrip-frame ${selectedFrameIndex === frame.index ? "selected" : ""} ${
+                    frame.frameKind === "study" ? "study-frame" : ""
+                  }`}
+                  onClick={() => onSelectFrame(frame.index)}
+                >
+                  <img src={frame.image} alt={`Frame ${frame.index}`} />
+                  <span>
+                    {frame.index}
+                    {frame.frameKind === "study" ? " study" : ""}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="filmstrip-action"
+                  onClick={() => onCreateAnimation(frame)}
+                  disabled={creatingAnimationFrameIndex !== null}
+                >
+                  {creatingAnimationFrameIndex === frame.index ? "Creating..." : "Create animation"}
+                </button>
+              </div>
             ))}
           </div>
           {selectedFrame?.effectivePrompt && (

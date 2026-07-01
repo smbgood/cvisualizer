@@ -51,3 +51,20 @@ export type SavedSession = {
   frame_count: number;
   thumbnail_url?: string | null;
 };
+
+export type AnimationFrame = {
+  index: number;
+  image: string;
+  createdAt: string;
+};
+
+export type AnimationItem = {
+  id: string;
+  createdAt: string;
+  prompt: string;
+  effectivePrompt: string;
+  frameCount: number;
+  durationSeconds: number;
+  frames: AnimationFrame[];
+  sourceFrameIndex: number;
+};
