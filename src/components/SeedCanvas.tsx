@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 type SeedCanvasProps = {
   onSeedChange: (dataUrl: string) => void;
+  onGo: () => void;
+  onNewSession: () => void;
   seedDataUrl?: string | null;
+  canGo: boolean;
+  isRunning: boolean;
 };
 
 const CANVAS_SIZE = 320;
@@ -17,7 +21,14 @@ function drawChecker(context: CanvasRenderingContext2D) {
   }
 }
 
-export default function SeedCanvas({ onSeedChange, seedDataUrl }: SeedCanvasProps) {
+export default function SeedCanvas({
+  onSeedChange,
+  onGo,
+  onNewSession,
+  seedDataUrl,
+  canGo,
+  isRunning,
+}: SeedCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [brushSize, setBrushSize] = useState(14);
@@ -154,6 +165,17 @@ export default function SeedCanvas({ onSeedChange, seedDataUrl }: SeedCanvasProp
           <input type="file" accept="image/*" onChange={importImage} />
         </label>
       </div>
+      <div className="control-row">
+        <button type="button" onClick={onGo} disabled={!canGo}>
+          Go
+        </button>
+        <button type="button" onClick={onNewSession}>
+          New Session
+        </button>
+      </div>
+      <p className="muted">
+        {isRunning ? "Generating from the submitted seed." : "Edit or import a seed, then press Go."}
+      </p>
     </section>
   );
 }

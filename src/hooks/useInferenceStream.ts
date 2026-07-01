@@ -47,7 +47,7 @@ function sendSeedFrame(socket: WebSocket, seedDataUrl: string) {
   );
 }
 
-export function useInferenceStream(seedDataUrl: string | null, settings: StreamSettings) {
+export function useInferenceStream(seedDataUrl: string | null, settings: StreamSettings, sessionKey: number) {
   const [state, setState] = useState<StreamState>({
     connected: false,
     latestFrame: null,
@@ -72,6 +72,8 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
   const socketRef = useRef<WebSocket | null>(null);
   const latestSeedRef = useRef<string | null>(seedDataUrl);
   const latestSettingsRef = useRef<StreamSettings>(settings);
+  latestSeedRef.current = seedDataUrl;
+  latestSettingsRef.current = settings;
 
   useEffect(() => {
     let active = true;
@@ -115,6 +117,25 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
   }, []);
 
   useEffect(() => {
+    setState((current) => ({
+      ...current,
+      connected: false,
+      latestFrame: null,
+      sessionId: null,
+      timelineFrames: [],
+      deltaFromPrevious: null,
+      stagnantFrames: 0,
+      variationApplied: false,
+      variationTriggered: false,
+      variationPulseRemaining: 0,
+      promptEnhancementEnabled: false,
+      promptEnhancementInterval: 12,
+      promptEnhancementStrength: 0.55,
+      promptEnhancementRefreshed: false,
+      enhancedPrompt: null,
+      promptEnhancementLastFrame: 0,
+      effectivePrompt: null,
+    }));
     const socket = new WebSocket(WS_URL);
     socketRef.current = socket;
 
@@ -145,6 +166,11 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
           frame?: string;
           session_id?: string;
           frame_index?: number;
+          frame_kind?: "generated" | "study";
+          generation_index?: number;
+          study_step?: number;
+          study_total?: number;
+          study_frame_effort?: number;
           frame_url?: string;
           created_at?: string;
           engine?: string;
@@ -201,7 +227,17 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
                 {
                   index: frameIndex,
                   image: frameUrl,
+                  frameKind:
+                    payload.frame_kind === "study" || payload.frame_kind === "generated"
+                      ? payload.frame_kind
+                      : "generated",
                   createdAt: payload.created_at ?? new Date().toISOString(),
+                  generationIndex:
+                    typeof payload.generation_index === "number" ? payload.generation_index : undefined,
+                  studyStep: typeof payload.study_step === "number" ? payload.study_step : undefined,
+                  studyTotal: typeof payload.study_total === "number" ? payload.study_total : undefined,
+                  studyFrameEffort:
+                    typeof payload.study_frame_effort === "number" ? payload.study_frame_effort : undefined,
                   deltaFromPrevious:
                     typeof payload.delta_from_previous === "number" ? payload.delta_from_previous : null,
                   stagnantFrames:
@@ -282,7 +318,7 @@ export function useInferenceStream(seedDataUrl: string | null, settings: StreamS
       socket.close();
       socketRef.current = null;
     };
-  }, []);
+  }, [sessionKey]);
 
   useEffect(() => {
     latestSettingsRef.current = settings;

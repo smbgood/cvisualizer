@@ -16,6 +16,11 @@ class InferenceSettings:
   prompt_enhancement_enabled: bool = False
   prompt_enhancement_interval: int = 12
   prompt_enhancement_strength: float = 0.55
+  study_frames_enabled: bool = True
+  study_frame_count: int = 2
+  study_frame_strength: float = 0.2
+  study_frame_effort: int = 1
+  study_frame_delay: float = 0.6
 
 
 class InferenceEngine:

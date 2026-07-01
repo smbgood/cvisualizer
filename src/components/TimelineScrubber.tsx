@@ -31,7 +31,10 @@ export default function TimelineScrubber({
     <section className="panel">
       <div className="panel-header">
         <h3>Timeline</h3>
-        <span className="muted">{frames.length} frames</span>
+        <span className="muted">
+          {frames.length} frames
+          {frames.some((frame) => frame.frameKind === "study") ? " incl. study frames" : ""}
+        </span>
       </div>
 
       {frames.length === 0 ? (
@@ -41,6 +44,9 @@ export default function TimelineScrubber({
           <div className="control-row timeline-controls">
             <label>
               Frame {selectedFrame ? selectedFrame.index : maxFrame}
+              {selectedFrame?.frameKind === "study" && selectedFrame.studyStep && selectedFrame.studyTotal
+                ? ` (study ${selectedFrame.studyStep}/${selectedFrame.studyTotal})`
+                : ""}
               <input
                 type="range"
                 min={frames[0].index}
@@ -59,11 +65,16 @@ export default function TimelineScrubber({
               <button
                 type="button"
                 key={frame.index}
-                className={`filmstrip-frame ${selectedFrameIndex === frame.index ? "selected" : ""}`}
+                className={`filmstrip-frame ${selectedFrameIndex === frame.index ? "selected" : ""} ${
+                  frame.frameKind === "study" ? "study-frame" : ""
+                }`}
                 onClick={() => onSelectFrame(frame.index)}
               >
                 <img src={frame.image} alt={`Frame ${frame.index}`} />
-                <span>{frame.index}</span>
+                <span>
+                  {frame.index}
+                  {frame.frameKind === "study" ? " study" : ""}
+                </span>
               </button>
             ))}
           </div>

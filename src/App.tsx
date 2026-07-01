@@ -33,10 +33,12 @@ async function imageUrlToDataUrl(imageUrl: string): Promise<string | null> {
 }
 
 export default function App() {
-  const [seedDataUrl, setSeedDataUrl] = useState<string | null>(null);
+  const [draftSeedDataUrl, setDraftSeedDataUrl] = useState<string | null>(null);
+  const [submittedSeedDataUrl, setSubmittedSeedDataUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("radical surreal neon transformation");
   const [strength, setStrength] = useState(0.85);
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [sessionKey, setSessionKey] = useState(0);
   const [antiStagnationEnabled, setAntiStagnationEnabled] = useState(true);
   const [stagnationThreshold, setStagnationThreshold] = useState(0.012);
   const [stagnationWindow, setStagnationWindow] = useState(6);
@@ -44,6 +46,11 @@ export default function App() {
   const [promptEnhancementEnabled, setPromptEnhancementEnabled] = useState(false);
   const [promptEnhancementInterval, setPromptEnhancementInterval] = useState(12);
   const [promptEnhancementStrength, setPromptEnhancementStrength] = useState(0.55);
+  const [studyFramesEnabled, setStudyFramesEnabled] = useState(true);
+  const [studyFrameCount, setStudyFrameCount] = useState(2);
+  const [studyFrameStrength, setStudyFrameStrength] = useState(0.2);
+  const [studyFrameEffort, setStudyFrameEffort] = useState(1);
+  const [studyFrameDelay, setStudyFrameDelay] = useState(0.6);
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
@@ -62,6 +69,11 @@ export default function App() {
       prompt_enhancement_enabled: promptEnhancementEnabled,
       prompt_enhancement_interval: promptEnhancementInterval,
       prompt_enhancement_strength: promptEnhancementStrength,
+      study_frames_enabled: studyFramesEnabled,
+      study_frame_count: studyFrameCount,
+      study_frame_strength: studyFrameStrength,
+      study_frame_effort: studyFrameEffort,
+      study_frame_delay: studyFrameDelay,
     }),
     [
       prompt,
@@ -74,10 +86,15 @@ export default function App() {
       promptEnhancementEnabled,
       promptEnhancementInterval,
       promptEnhancementStrength,
+      studyFramesEnabled,
+      studyFrameCount,
+      studyFrameStrength,
+      studyFrameEffort,
+      studyFrameDelay,
     ],
   );
 
-  const stream = useInferenceStream(seedDataUrl, settings);
+  const stream = useInferenceStream(submittedSeedDataUrl, settings, sessionKey);
   const timelineFrames = viewedTimeline?.frames ?? stream.timelineFrames;
   const selectedTimelineFrame =
     selectedFrameIndex === null
@@ -114,6 +131,11 @@ export default function App() {
     const data = (await response.json()) as {
       frames: Array<{
         index: number;
+        kind?: "generated" | "study";
+        generation_index?: number;
+        study_step?: number;
+        study_total?: number;
+        study_frame_effort?: number;
         url: string;
         created_at: string;
         seed_index?: number | null;
@@ -137,7 +159,12 @@ export default function App() {
     const frames = data.frames.map((frame) => ({
       index: frame.index,
       image: backendAssetUrl(frame.url),
+      frameKind: frame.kind ?? "generated",
       createdAt: frame.created_at,
+      generationIndex: frame.generation_index,
+      studyStep: frame.study_step,
+      studyTotal: frame.study_total,
+      studyFrameEffort: frame.study_frame_effort,
       seedIndex: frame.seed_index ?? null,
       seedUrl: frame.seed_url ? backendAssetUrl(frame.seed_url) : null,
       prompt: frame.prompt,
@@ -169,6 +196,28 @@ export default function App() {
     }
   };
 
+  const startGeneration = () => {
+    if (!draftSeedDataUrl) {
+      return;
+    }
+
+    setSubmittedSeedDataUrl(draftSeedDataUrl);
+    setViewedTimeline(null);
+    setSelectedSnapshotId(null);
+    setSelectedFrameIndex(null);
+    setRunning(true);
+  };
+
+  const startNewSession = () => {
+    setRunning(false);
+    setSubmittedSeedDataUrl(null);
+    setViewedTimeline(null);
+    setSelectedSnapshotId(null);
+    setSelectedFrameIndex(null);
+    setSessionKey((value) => value + 1);
+    void refreshSavedSessions();
+  };
+
   useEffect(() => {
     if (!viewedTimeline || selectedFrameIndex === null) {
       return;
@@ -183,7 +232,7 @@ export default function App() {
     const restoreSeed = async () => {
       const restoredSeed = await imageUrlToDataUrl(seedUrl);
       if (!cancelled && restoredSeed) {
-        setSeedDataUrl(restoredSeed);
+        setDraftSeedDataUrl(restoredSeed);
       }
     };
 
@@ -219,7 +268,14 @@ export default function App() {
       </header>
 
       <section className="grid-top">
-        <SeedCanvas onSeedChange={setSeedDataUrl} seedDataUrl={seedDataUrl} />
+        <SeedCanvas
+          onSeedChange={setDraftSeedDataUrl}
+          onGo={startGeneration}
+          onNewSession={startNewSession}
+          seedDataUrl={draftSeedDataUrl}
+          canGo={Boolean(draftSeedDataUrl) && stream.connected}
+          isRunning={running}
+        />
         <div className="stack">
           <LiveDisplay
             frameDataUrl={displayImage}
@@ -245,6 +301,72 @@ export default function App() {
                   step={0.01}
                   value={strength}
                   onChange={(event) => setStrength(Number(event.target.value))}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={studyFramesEnabled}
+                  onChange={(event) => setStudyFramesEnabled(event.target.checked)}
+                />
+                <span>Enable study frames between generations</span>
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Study frames {studyFrameCount}
+                <input
+                  type="range"
+                  min={0}
+                  max={6}
+                  step={1}
+                  value={studyFrameCount}
+                  onChange={(event) => setStudyFrameCount(Number(event.target.value))}
+                  disabled={!studyFramesEnabled}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Study alteration {studyFrameStrength.toFixed(2)}
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={studyFrameStrength}
+                  onChange={(event) => setStudyFrameStrength(Number(event.target.value))}
+                  disabled={!studyFramesEnabled || studyFrameCount === 0}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Study effort {studyFrameEffort}x
+                <input
+                  type="range"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={studyFrameEffort}
+                  onChange={(event) => setStudyFrameEffort(Number(event.target.value))}
+                  disabled={!studyFramesEnabled || studyFrameCount === 0}
+                />
+              </label>
+            </div>
+            <div className="control-row">
+              <label>
+                Study hold {studyFrameDelay.toFixed(2)}s
+                <input
+                  type="range"
+                  min={0.05}
+                  max={3}
+                  step={0.05}
+                  value={studyFrameDelay}
+                  onChange={(event) => setStudyFrameDelay(Number(event.target.value))}
+                  disabled={!studyFramesEnabled || studyFrameCount === 0}
                 />
               </label>
             </div>

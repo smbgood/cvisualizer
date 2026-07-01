@@ -209,6 +209,15 @@ button,
   object-fit: cover;
 }
 
+.filmstrip-frame.study-frame {
+  border-color: #6f5ba7;
+  background: #15152f;
+}
+
+.filmstrip-frame.study-frame span {
+  color: #cfc2ff;
+}
+
 .filmstrip-frame.selected,
 .saved-session.selected {
   outline: 2px solid #7da4ff;
